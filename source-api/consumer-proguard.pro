@@ -5,3 +5,6 @@
 -keep,allowoptimization class eu.kanade.tachiyomi.util.JsoupExtensionsKt { public protected *; }
 
 -keep class exh.metadata.** { public protected *; }
+
+-keep interface eu.kanade.tachiyomi.source.ProgressAwareSource { *; }
+-keep class eu.kanade.tachiyomi.source.model.ChapterProgress { *; }

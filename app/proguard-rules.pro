@@ -315,3 +315,11 @@
 -dontwarn org.ietf.jgss.Oid
 -dontwarn com.google.re2j.Matcher
 -dontwarn com.google.re2j.Pattern
+
+
+# ---------------------------------------------------------------------------
+# ProgressAwareSource (source-owned page progress; loaded via as? from extensions)
+# R8 otherwise strips the interface because no host class implements it directly.
+# ---------------------------------------------------------------------------
+-keep interface eu.kanade.tachiyomi.source.ProgressAwareSource { *; }
+-keep class eu.kanade.tachiyomi.source.model.ChapterProgress { *; }
