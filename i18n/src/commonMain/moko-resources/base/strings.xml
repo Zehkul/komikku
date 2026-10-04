@@ -402,6 +402,8 @@
     <string name="pref_double_tap_anim_speed">Double tap animation speed</string>
     <string name="pref_show_page_number">Show page number</string>
     <string name="pref_show_reading_mode">Show reading mode</string>
+    <string name="pref_source_progress_allow_backwards">Allow Remote Progress Rollbacks</string>
+    <string name="pref_source_progress_allow_backwards_summary">Sync progress from the server even if it is behind your local position (e.g., re-reading or resetting chapters). Does nothing unless the extension is progress aware.</string>
     <string name="pref_show_reading_mode_summary">Briefly show current mode when reader is opened</string>
     <string name="pref_hardware_bitmap_threshold">Custom hardware bitmap threshold</string>
     <string name="pref_hardware_bitmap_threshold_default">Default (%d)</string>

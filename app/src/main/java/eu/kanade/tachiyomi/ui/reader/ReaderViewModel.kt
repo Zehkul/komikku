@@ -103,6 +103,11 @@ import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.source.local.isLocal
 import uy.kohesive.injekt.Injekt
+import eu.kanade.domain.manga.model.toSManga
+import eu.kanade.domain.source.service.SourceProgressSync
+import eu.kanade.tachiyomi.source.ProgressAwareSource
+import eu.kanade.tachiyomi.source.model.ChapterProgress
+import eu.kanade.tachiyomi.data.database.models.toDomainChapter
 import uy.kohesive.injekt.api.get
 import java.time.Instant
 import java.util.Date
@@ -172,6 +177,9 @@ class ReaderViewModel @JvmOverloads constructor(
             savedState["page_index"] = value
             field = value
         }
+
+    /** Chapter ids opened while already marked read (re-read session). */
+    private val rereadingChapterIds = mutableSetOf<Long>()
 
     // KMK -->
     fun handleDownloadAction(chapter: Chapter, action: ChapterDownloadAction) {
@@ -346,6 +354,7 @@ class ReaderViewModel @JvmOverloads constructor(
     }
 
     val incognitoMode: Boolean by lazy { getIncognitoState.await(manga?.source) }
+    private val sourceProgressSync = SourceProgressSync(updateChapter)
     private val downloadAheadAmount = downloadPreferences.autoDownloadWhileReading().get()
 
     init {
@@ -387,6 +396,7 @@ class ReaderViewModel @JvmOverloads constructor(
     }
 
     override fun onCleared() {
+        flushSourceProgress()
         val currentChapters = state.value.viewerChapters
         if (currentChapters != null) {
             currentChapters.unref()
@@ -401,7 +411,18 @@ class ReaderViewModel @JvmOverloads constructor(
      * trigger deletion of the downloaded chapters.
      */
     fun onActivityFinish() {
+        flushSourceProgress()
         deletePendingChapters()
+    }
+
+    /** Push queued page progress to a ProgressAwareSource (best-effort). */
+    private fun flushSourceProgress() {
+        if (incognitoMode) return
+        val m = manga ?: return
+        val progressSource = sourceManager.get(m.source) as? ProgressAwareSource ?: return
+        viewModelScope.launchNonCancellable {
+            sourceProgressSync.flush(progressSource, m.toSManga(), m.id)
+        }
     }
 
     /**
@@ -481,9 +502,40 @@ class ReaderViewModel @JvmOverloads constructor(
                         // SY <--
                     )
 
+                    val initialReaderChapter = chapterList.first { chapterId == it.chapter.id }
+                    // Re-read: Tachiyomi family starts completed chapters at page 0.
+                    // Do not pull remote progress into the starting page for completed chapters
+                    // (would jump to the end). Source push while still "read" is also suppressed
+                    // in updateChapterProgress unless allow-backwards is enabled.
+                    val isReread = initialReaderChapter.chapter.read
+                    if (isReread && page == null) {
+                        initialReaderChapter.chapter.id?.let { rereadingChapterIds.add(it) }
+                        initialReaderChapter.chapter.last_page_read = 0
+                        initialReaderChapter.requestedPage = 0
+                    } else {
+                        // Source-owned progress: await short pull before first page
+                        val progressSource = source as? ProgressAwareSource
+                        if (progressSource != null && !incognitoMode) {
+                            val domainChapter = initialReaderChapter.chapter.toDomainChapter()
+                            if (domainChapter != null) {
+                                val mergedPage = sourceProgressSync.pullForReaderOpen(
+                                    source = progressSource,
+                                    manga = manga.toSManga(),
+                                    mangaId = manga.id,
+                                    chapter = domainChapter,
+                                    localPageIndex = initialReaderChapter.chapter.last_page_read,
+                                    localCompleted = initialReaderChapter.chapter.read,
+                                )
+                                initialReaderChapter.chapter.last_page_read = mergedPage
+                                if (page == null) {
+                                    initialReaderChapter.requestedPage = mergedPage
+                                }
+                            }
+                        }
+                    }
                     loadChapter(
                         loader!!,
-                        chapterList.first { chapterId == it.chapter.id },
+                        initialReaderChapter,
                         // SY -->
                         page,
                         // SY <--
@@ -846,6 +898,33 @@ class ReaderViewModel @JvmOverloads constructor(
                     lastPageRead = readerChapter.chapter.last_page_read.toLong(),
                 ),
             )
+
+            // Queue source-owned progress (flushed on reader exit; immediate flush on complete).
+            // Re-reading a completed chapter: never push page flips — that would flash
+            // partial progress on the server for an already-finished chapter.
+            val m = manga
+            if (m != null) {
+                val chapterId = readerChapter.chapter.id
+                val isRereadSession = chapterId != null && chapterId in rereadingChapterIds
+                val progressSource = sourceManager.get(m.source) as? ProgressAwareSource
+                if (progressSource != null && !isRereadSession) {
+                    sourceProgressSync.enqueue(
+                        m.id,
+                        ChapterProgress(
+                            chapterUrl = readerChapter.chapter.url,
+                            pageIndex = pageIndex,
+                            pageCount = readerChapter.pages?.size,
+                            completed = readerChapter.chapter.read,
+                            readAt = System.currentTimeMillis(),
+                        ),
+                    )
+                    if (readerChapter.chapter.read) {
+                        viewModelScope.launchNonCancellable {
+                            sourceProgressSync.flush(progressSource, m.toSManga(), m.id)
+                        }
+                    }
+                }
+            }
 
             // SY -->
             // Check if syncing is enabled for chapter open:

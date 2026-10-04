@@ -54,6 +54,15 @@ class SourcePreferences(
     fun hideInLibraryFeedItems() = preferenceStore.getBoolean("feed_hide_in_library_items", false)
     // KMK <--
 
+    /**
+     * When true, remote page progress that is behind local is accepted.
+     * Defaults to true so source state stays transparent (e.g. Kavita web UI).
+     */
+    fun allowSourceProgressBackwards() = preferenceStore.getBoolean(
+        "pref_source_progress_allow_backwards",
+        true,
+    )
+
     @Deprecated("Use ExtensionRepoRepository instead", replaceWith = ReplaceWith("ExtensionRepoRepository.getAll()"))
     fun extensionRepos() = preferenceStore.getStringSet("extension_repos", emptySet())
 

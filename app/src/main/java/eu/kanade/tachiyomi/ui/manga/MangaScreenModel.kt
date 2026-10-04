@@ -38,6 +38,9 @@ import eu.kanade.domain.manga.model.chaptersFiltered
 import eu.kanade.domain.manga.model.downloadedFilter
 import eu.kanade.domain.manga.model.toSManga
 import eu.kanade.domain.source.service.SourcePreferences
+import eu.kanade.domain.source.service.SourceProgressSync
+import eu.kanade.tachiyomi.source.model.ChapterProgress
+import eu.kanade.tachiyomi.source.ProgressAwareSource
 import eu.kanade.domain.track.interactor.AddTracks
 import eu.kanade.domain.track.interactor.RefreshTracks
 import eu.kanade.domain.track.interactor.TrackChapter
@@ -233,6 +236,8 @@ class MangaScreenModel(
     private val deleteChaptersFromDb: DeleteChapters = Injekt.get(),
     // KMK <--
 ) : StateScreenModel<MangaScreenModel.State>(State.Loading) {
+
+    private val sourceProgressSync: SourceProgressSync by lazy { SourceProgressSync(updateChapter) }
 
     private val successState: State.Success?
         get() = state.value as? State.Success
@@ -517,6 +522,17 @@ class MangaScreenModel(
                 // KMK <--
             }
 
+            // Source progress sync when series opens with existing chapter list
+            val openState = successState
+            if (openState != null && openState.chapters.isNotEmpty()) {
+                launch {
+                    syncSourceProgress(
+                        openState.manga,
+                        openState.chapters,
+                    )
+                }
+            }
+
             // Initial loading finished
             updateSuccessState { it.copy(isRefreshingData = false) }
         }
@@ -585,6 +601,57 @@ class MangaScreenModel(
     }
     // KMK <--
 
+
+    /**
+     * Push explicit mark-read / mark-unread to a ProgressAwareSource and flush.
+     * Unread always resets pageIndex to 0 so the server does not re-apply old progress.
+     */
+    private suspend fun pushMarkReadToSource(chapters: List<Chapter>, read: Boolean) {
+        val state = successState ?: return
+        val progressSource = sourceManager.get(state.manga.source) as? ProgressAwareSource ?: return
+        val manga = state.manga
+        for (ch in chapters) {
+            if (ch.url.isEmpty()) continue
+            sourceProgressSync.enqueue(
+                manga.id,
+                ChapterProgress(
+                    chapterUrl = ch.url,
+                    pageIndex = if (read) ch.lastPageRead.toInt().coerceAtLeast(0) else 0,
+                    pageCount = null,
+                    completed = read,
+                    readAt = System.currentTimeMillis(),
+                ),
+            )
+        }
+        runCatching {
+            sourceProgressSync.flush(progressSource, manga.toSManga(), manga.id)
+        }.onFailure { e ->
+            logcat(LogPriority.ERROR, e) { "Failed to push mark-read=$read to source" }
+        }
+    }
+
+    /**
+     * Push pending offline progress then pull source snapshot for this series.
+     * Used on series open and pull-to-refresh (manual sync for ProgressAwareSource).
+     */
+    private suspend fun syncSourceProgress(
+        manga: Manga,
+        chapterItems: List<ChapterList.Item>,
+    ) {
+        val source = sourceManager.get(manga.source) as? ProgressAwareSource ?: return
+        val chapters = chapterItems.map { it.chapter }
+        runCatching {
+            sourceProgressSync.syncSeries(
+                source = source,
+                manga = manga.toSManga(),
+                mangaId = manga.id,
+                chapters = chapters,
+            )
+        }.onFailure { e ->
+            logcat(LogPriority.ERROR, e) { "Source progress sync failed for manga ${manga.id}" }
+        }
+    }
+
     fun fetchAllFromSource(manualFetch: Boolean = true) {
         screenModelScope.launch {
             updateSuccessState { it.copy(isRefreshingData = true) }
@@ -623,6 +690,19 @@ class MangaScreenModel(
 
                 if (manualFetch) {
                     downloadNewChapters(update.newChapters)
+                }
+
+                // Source progress: await on manual pull-to-refresh so backwards updates
+                // apply before the spinner ends; background on automatic open fetches.
+                val stateAfter = successState
+                if (stateAfter != null) {
+                    if (manualFetch) {
+                        syncSourceProgress(stateAfter.manga, stateAfter.chapters)
+                    } else {
+                        screenModelScope.launchIO {
+                            syncSourceProgress(stateAfter.manga, stateAfter.chapters)
+                        }
+                    }
                 }
             }
         } catch (_: CancellationException) {
@@ -1375,6 +1455,9 @@ class MangaScreenModel(
                 read = read,
                 chapters = chapters.toTypedArray(),
             )
+
+            // Push mark-read / mark-unread to ProgressAwareSource (Kavita, …)
+            pushMarkReadToSource(chapters, read)
 
             if (!read || successState?.hasLoggedInTrackers == false || autoTrackState == AutoTrackState.NEVER) {
                 return@launchIO

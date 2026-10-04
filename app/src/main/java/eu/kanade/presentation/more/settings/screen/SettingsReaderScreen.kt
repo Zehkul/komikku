@@ -9,6 +9,7 @@ import eu.kanade.presentation.more.settings.Preference
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderBottomButton
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
+import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences.Companion.zoomWideImagesAllowedList
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences.WebtoonScaleType
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
@@ -63,6 +64,11 @@ object SettingsReaderScreen : SearchableSettings {
                 preference = readerPref.showReadingMode(),
                 title = stringResource(MR.strings.pref_show_reading_mode),
                 subtitle = stringResource(MR.strings.pref_show_reading_mode_summary),
+            ),
+            Preference.PreferenceItem.SwitchPreference(
+                preference = remember { Injekt.get<SourcePreferences>() }.allowSourceProgressBackwards(),
+                title = stringResource(MR.strings.pref_source_progress_allow_backwards),
+                subtitle = stringResource(MR.strings.pref_source_progress_allow_backwards_summary),
             ),
             Preference.PreferenceItem.SwitchPreference(
                 preference = readerPref.showNavigationOverlayOnStart(),
