@@ -17,6 +17,9 @@ class MissingChaptersTest {
     @Test
     fun `missingChaptersCount returns 0 when all unknown chapter numbers`() {
         listOf(-1.0, -1.0, -1.0).missingChaptersCount() shouldBe 0
+        // -2 is the specials/unnumbered sentinel used by some extensions
+        listOf(-2.0, -2.0, -2.0).missingChaptersCount() shouldBe 0
+        listOf(-2.0, -1.0, 1.0, 2.0).missingChaptersCount() shouldBe 0
     }
 
     @Test
